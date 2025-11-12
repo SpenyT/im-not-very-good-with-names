@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+# OS-aware commit message validator:
+# - Enforces Conventional Commits header
+# - Requires at least one issue reference like #123
+# - Handles Windows Git Bash quirks (CRLF, pipefail availability)
+
+# --- OS detection ------------------------------------------------------------
+OS="other"
+UNAME_S="$(uname -s 2>/dev/null || echo unknown)"
+case "$UNAME_S" in
+  Darwin) OS="mac" ;;
+  Linux)
+    if grep -qi microsoft /proc/version 2>/dev/null; then
+      OS="windows"
+    else
+      OS="linux"
+    fi
+    ;;
+  MINGW*|MSYS*|CYGWIN*)
+    OS="windows"
+    ;;
+esac
+
+# --- Shell options (be conservative on Windows) ------------------------------
+set -eu
+# Enable pipefail if the shell supports it (some Windows environments don’t)
+if (set -o | grep -q '^pipefail'); then
+  set -o pipefail || true
+fi
+
+MSG_FILE="$1"
+
+# Read commit message and normalize CRLF on Windows-like envs
+if [ "$OS" = "windows" ]; then
+  # Remove carriage returns to avoid regex mismatches
+  MSG="$(tr -d '\r' < "$MSG_FILE")"
+else
+  MSG="$(cat "$MSG_FILE")"
+fi
+
+MSG_FILE="$1"
+MSG="$(cat "$MSG_FILE")"
+HEADER="$(printf "%s" "$MSG" | head -n1)"
+
+# Conventional Commits header: # type(scope)!?: subject
+TYPE_RE='(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)'
+SCOPE_RE='(\([a-z0-9][a-z0-9._/-]*\))?'     # optional, kebab/camel/dots/slashes allowed
+BANG_RE='!?'                                 # optional breaking change marker
+SUBJECT_RE=': [^ ].+'                        # colon + space + non-empty subject (no leading space)
+
+if ! echo "$HEADER" | grep -E -q "^${TYPE_RE}${SCOPE_RE}${BANG_RE}${SUBJECT_RE}$"; then
+  cat <<'EOF' >&2
+  Commit message must follow Conventional Commits:
+
+  type(scope)?: subject #issue
+  ^^^^          ^^^^^^^
+  required       required (short, imperative)
+  
+  Types: feat | fix | docs | style | refactor | perf | test | build | ci | chore | revert
+  Breaking changes: add "!" after type/scope (e.g., feat!: ... or feat(api)!: ...) 
+  Examples:
+    feat(parser)!: support new syntax (#33)
+    fix(ui): correct button color #123
+    docs(readme): add install instructions (#22)
+EOF
+  exit 1 
+fi 
+
+# Optional: keep subject line reasonable (<= 100 chars)
+if [ "${#HEADER}" -gt 100 ]; then 
+  echo "Subject too long (${#HEADER} > 100). Keep it ≤ 100 chars." >&2
+  exit 1 
+fi 
+
+# Require at least one issue reference anywhere in the message, like #123 
+if ! printf "%s" "$MSG" | grep -E -q '#[0-9]+'; then
+  echo "Include at least one issue reference like '#123' in the commit message." >&2
+  exit 1
+fi 
+
+# Allow BREAKING CHANGE: footer or any body text—no extra checks needed.
+exit 0

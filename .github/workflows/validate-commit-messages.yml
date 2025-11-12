@@ -1,0 +1,123 @@
+name: Validate Commit Messages
+on:
+  push:
+    branches: ['**']
+  pull_request:
+    branches: ['**']
+jobs:
+  validate-commit-messages:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Validate commit messages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          #!/bin/bash
+          set -eu
+          
+          
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            COMMITS=$(git log origin/${{ github.base_ref }}..HEAD --format=%H)
+          else
+            if [ "${{ github.event.before }}" = "0000000000000000000000000000000000000000" ]; then
+              COMMITS=$(git log -1 --format=%H)
+            else
+              COMMITS=$(git log ${{ github.event.before }}..${{ github.event.after }} --format=%H)
+            fi
+          fi
+          
+          if [ -z "$COMMITS" ]; then
+            echo "No commits to validate"
+            exit 0
+          fi
+          
+          TYPE_RE='(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)'
+          SCOPE_RE='(\([a-z0-9][a-z0-9._/-]*\))?'
+          BANG_RE='!?'
+          SUBJECT_RE=': [^ ].+'
+          HEADER_RE="^${TYPE_RE}${SCOPE_RE}${BANG_RE}${SUBJECT_RE}$"
+          
+          REPO="${{ github.repository }}"
+          FAILED=0
+
+          for commit in $COMMITS; do
+            echo "Validating commit message: $commit"
+            
+            MSG=$(git log -1 --format=%B "$commit")
+            HEADER=$(echo "$MSG" | head -n1)
+            
+            # Skip merge commits
+            if echo "$HEADER" | grep -q "^Merge "; then
+              echo "Skipping merge commit"
+              echo ""
+              continue
+            fi
+            
+            echo "Header: $HEADER"
+            
+            if ! echo "$HEADER" | grep -E -q "$HEADER_RE"; then
+              echo "FAILED: Commit message must follow Conventional Commits format"
+              echo ""
+              echo "Expected format:"
+              echo "  type(scope)?: subject #issue"
+              echo ""
+              echo "Types: feat | fix | docs | style | refactor | perf | test | build | ci | chore | revert"
+              echo "Breaking changes: add '!' after type/scope"
+              echo ""
+              echo "Examples:"
+              echo "  feat(parser)!: support new syntax (#33)"
+              echo "  fix(ui): correct button color #123"
+              echo "  docs(readme): add install instructions (#22)"
+              echo ""
+              FAILED=1
+              continue
+            fi
+            
+            HEADER_LENGTH=${#HEADER}
+            if [ "$HEADER_LENGTH" -gt 100 ]; then
+              echo "FAILED: Subject too long ($HEADER_LENGTH > 100 characters)"
+              FAILED=1
+              continue
+            fi
+            
+            if ! echo "$MSG" | grep -E -q '#[0-9]+'; then
+              echo "FAILED: Missing issue reference (e.g., #123)"
+              FAILED=1
+              continue
+            fi
+            
+            # Extract all issue numbers from the commit message
+            ISSUE_NUMBERS=$(echo "$MSG" | grep -o -E '#[0-9]+' | sed 's/#//')
+            
+            # Verify each issue exists in the repository
+            for issue_num in $ISSUE_NUMBERS; do
+              echo "Checking issue #$issue_num..."
+              
+              # Use GitHub CLI to check if issue exists
+              if ! gh issue view "$issue_num" --repo "$REPO" > /dev/null 2>&1; then
+                echo "FAILED: Issue #$issue_num does not exist in repository $REPO"
+                FAILED=1
+              else
+                echo "Issue #$issue_num exists"
+              fi
+            done
+            
+            if [ $FAILED -eq 0 ]; then
+              echo "PASSED"
+            fi
+            echo ""
+          done
+          
+          if [ $FAILED -eq 1 ]; then
+            echo "Commit message validation failed"
+            exit 1
+          fi
+          
+          echo "All commit messages are valid"
+          exit 0
