@@ -17,7 +17,8 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'rest_framework',
-    'enrichment'
+    'classifier',
+    'enrichment',
 ]
 
 # needs cleaning, remove as needed
