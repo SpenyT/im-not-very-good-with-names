@@ -1,4 +1,8 @@
-django
-djangorestframework
-django-cors-headers
-python-dotenv
+Django>=4.2,<5.0
+djangorestframework>=3.14.0
+django-cors-headers>=4.0.0
+Pillow>=10.0.0
+python-dotenv>=1.0.0
+
+# Testing
+coverage>=7.0.0
